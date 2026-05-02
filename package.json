@@ -1,0 +1,8 @@
+{
+  "name": "xhttp-edge-relay",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Secure XHTTP relay for Vercel Edge Functions",
+  "private": true,
+  "license": "MIT"
+}
