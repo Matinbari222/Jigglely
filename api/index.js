@@ -2,19 +2,18 @@ export const config = {
   runtime: "edge",
 };
 
-// --- Environment Variables ---
+// ---------- Environment Variables ----------
 const TARGET_BASE = (process.env.TARGET_DOMAIN || "").replace(/\/$/, "");
 const RELAY_PATH = normalizeRelayPath(process.env.RELAY_PATH || "/xhttp-relay");
 const RELAY_KEY = (process.env.RELAY_KEY || "").trim();
 const UPSTREAM_TIMEOUT_MS = parsePositiveInt(process.env.UPSTREAM_TIMEOUT_MS, 60000, 1000);
 const MAX_INFLIGHT = parsePositiveInt(process.env.MAX_INFLIGHT, 12, 1);
 const FAKE_HEALTH_PATH = normalizeRelayPath(process.env.FAKE_HEALTH_PATH || "/health");
-const JITTER_MS_MAX = parsePositiveInt(process.env.JITTER_MS_MAX, 0, 0); // پیش‌فرض غیرفعال
+const JITTER_MS_MAX = parsePositiveInt(process.env.JITTER_MS_MAX, 0, 0);
 
-// --- Method Allowlist ---
+// ---------- Constants ----------
 const ALLOWED_METHODS = new Set(["GET", "HEAD", "POST"]);
 
-// --- Strip Headers (Incoming) ---
 const STRIP_REQUEST_HEADERS = new Set([
   "host", "connection", "keep-alive", "proxy-authenticate",
   "proxy-authorization", "te", "trailer", "transfer-encoding",
@@ -27,7 +26,6 @@ const STRIP_REQUEST_HEADERS = new Set([
   "proxy-connection",
 ]);
 
-// --- Strip Headers (Response from Upstream) ---
 const STRIP_RESPONSE_HEADERS = new Set([
   "server", "x-powered-by", "x-vercel-cache", "x-vercel-id",
   "x-vercel-deployment-url", "cf-cache-status", "cf-ray",
@@ -35,7 +33,6 @@ const STRIP_RESPONSE_HEADERS = new Set([
   "access-control-allow-credentials",
 ]);
 
-// --- Forwarded Header Whitelist ---
 const FORWARD_HEADER_PREFIXES = [
   "accept", "content-", "user-agent", "cache-control",
   "pragma", "sec-ch-", "sec-fetch-", "sec-websocket-",
@@ -43,53 +40,109 @@ const FORWARD_HEADER_PREFIXES = [
   "dnt", "authorization",
 ];
 
-// --- Concurrency ---
-let inFlight = 0;
-
-// --- Decoy 404 Templates (Randomly Chosen) ---
-const DECOY_404_TEMPLATES = [
-  "<!DOCTYPE html><html><head><title>404 Not Found</title></head><body><h1>Not Found</h1><p>The requested URL was not found on this server.</p></body></html>",
-  "<!DOCTYPE html><html><head><title>Page Not Found</title></head><body style='text-align:center;padding-top:50px;'><h2>404</h2><p>Oops! The page you're looking for doesn't exist.</p></body></html>",
-  "<!DOCTYPE html><html><head><title>Error 404</title></head><body><h1>404 - Resource Not Found</h1><p>Please check the URL or contact the administrator.</p></body></html>",
-  "<html><head><title>Not Found</title></head><body><center><h1>404</h1><p>Nothing to see here.</p></center></body></html>",
-  "<!DOCTYPE html><html><head><meta charset='utf-8'><title>404</title></head><body><h1>File Not Found</h1></body></html>"
-];
-
-// --- Fake Health Check Response ---
-const FAKE_HEALTH_JSON = JSON.stringify({
-  status: "ok",
-  uptime: Math.floor(Date.now() / 1000) % 86400, // fake uptime
-  version: "2.1.3",
-  timestamp: Date.now()
-});
-
-// --- Server Name Pool ---
-const SERVER_NAMES = ["nginx", "Apache/2.4.41 (Ubuntu)", "LiteSpeed", "cloudflare", "Microsoft-IIS/10.0"];
-
-// --- Random Item from Array ---
-function randomItem(arr) {
-  return arr[Math.floor(Math.random() * arr.length)];
-}
-
-// --- Delay (Jitter) - safe ---
-function randomDelay(maxMs) {
-  if (maxMs <= 0) return;
-  const ms = Math.floor(Math.random() * maxMs) + 20;
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-// --- Helper Functions ---
-function shouldForwardHeader(headerName) {
-  for (const prefix of FORWARD_HEADER_PREFIXES) {
-    if (headerName.startsWith(prefix)) return true;
+// ---------- HTML Landing Page (Decoy) ----------
+const LANDING_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>A Man With Two Heads</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0a0a0a;
+    color: #ccc;
+    font-family: 'Courier New', Courier, monospace;
+    display: flex; align-items: center; justify-content: center;
+    min-height: 100vh; padding: 2rem;
+    background-image: radial-gradient(circle at 20% 20%, #1a1a1a 0%, #0a0a0a 90%);
   }
-  return false;
-}
+  .card {
+    max-width: 600px; width: 100%;
+    background: #111; border: 1px solid #2a2a2a;
+    border-radius: 16px; padding: 2.5rem;
+    box-shadow: 0 0 30px rgba(255,0,0,0.1);
+  }
+  h1 {
+    font-size: 2.2rem; text-align: center;
+    background: linear-gradient(135deg, #e63946, #ff4d4d);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 1.5rem; letter-spacing: 2px;
+    text-shadow: 0 0 8px rgba(230,57,70,0.5);
+  }
+  .status-line {
+    display: flex; align-items: center; gap: 10px;
+    justify-content: center; margin-bottom: 2rem;
+  }
+  .status-dot {
+    width: 12px; height: 12px;
+    background: #2ecc71; border-radius: 50%;
+    box-shadow: 0 0 12px #2ecc71;
+    animation: pulse 1.5s infinite;
+  }
+  @keyframes pulse {
+    0%{opacity:1; transform:scale(1);} 50%{opacity:0.5; transform:scale(1.1);} 100%{opacity:1; transform:scale(1);}
+  }
+  .status-text { font-size: 1rem; color: #2ecc71; }
+  .quote {
+    font-style: italic; text-align: center;
+    padding: 1.2rem; border-left: 3px solid #e63946;
+    background: rgba(230,57,70,0.05); margin: 1.5rem 0;
+    color: #bbb;
+  }
+  .quote-author { display: block; margin-top: 0.5rem; color: #e63946; font-size: 0.9rem; }
+  .info-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;
+    margin-top: 1.5rem; font-size: 0.9rem;
+  }
+  .info-item {
+    background: #191919; padding: 0.8rem; border-radius: 8px;
+    border: 1px solid #2a2a2a;
+  }
+  .info-label { color: #888; font-size: 0.7rem; text-transform: uppercase; }
+  .info-value { color: #e63946; font-weight: bold; }
+  .footer-text {
+    text-align: center; font-size: 0.75rem; color: #555; margin-top: 2rem;
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>A Man With Two Heads</h1>
+  <div class="status-line">
+    <span class="status-dot"></span>
+    <span class="status-text">Operational</span>
+  </div>
+  <div class="quote">
+    “The eternal silence of these infinite spaces frightens me.”
+    <span class="quote-author">— Blaise Pascal</span>
+  </div>
+  <div class="info-grid">
+    <div class="info-item"><span class="info-label">Project</span><br><span class="info-value">xHTTP Relay</span></div>
+    <div class="info-item"><span class="info-label">Environment</span><br><span class="info-value">Edge Network</span></div>
+    <div class="info-item"><span class="info-label">Node</span><br><span class="info-value" id="nodeId">EU-WEST-1</span></div>
+    <div class="info-item"><span class="info-label">Visitors</span><br><span class="info-value" id="visitorCount">1,337</span></div>
+  </div>
+  <div class="footer-text">
+    &copy; 2025 – This is a decoy page.
+  </div>
+</div>
+<script>
+  (function(){
+    let c = localStorage.getItem('vCounter');
+    if(!c){ c = 1337 + Math.floor(Math.random()*100); }
+    c = parseInt(c) + 1;
+    localStorage.setItem('vCounter', c);
+    document.getElementById('visitorCount').textContent = c.toLocaleString();
+    const regions = ['EU-WEST-1','US-EAST-2','AP-SOUTHEAST-1','SA-EAST-1'];
+    document.getElementById('nodeId').textContent = regions[Math.floor(Math.random()*regions.length)];
+  })();
+</script>
+</body>
+</html>`;
 
-function isAllowedRelayPath(pathname) {
-  return pathname === RELAY_PATH || pathname.startsWith(`${RELAY_PATH}/`);
-}
-
+// ---------- Helper Functions ----------
 function normalizeRelayPath(rawPath) {
   if (!rawPath) return "/";
   let path = rawPath.startsWith("/") ? rawPath : `/${rawPath}`;
@@ -98,47 +151,73 @@ function normalizeRelayPath(rawPath) {
   }
   return path;
 }
-
-function parsePositiveInt(rawValue, fallbackValue, minValue) {
-  const value = Number(rawValue);
-  if (!Number.isFinite(value)) return fallbackValue;
-  if (value < minValue) return fallbackValue;
-  return Math.trunc(value);
+function parsePositiveInt(raw, fallback, min) {
+  const val = Number(raw);
+  if (!Number.isFinite(val) || val < min) return fallback;
+  return Math.trunc(val);
 }
-
 function tryAcquireSlot() {
   if (inFlight >= MAX_INFLIGHT) return false;
   inFlight++;
   return true;
 }
-
 function releaseSlot() {
   inFlight = Math.max(0, inFlight - 1);
 }
+function shouldForwardHeader(headerName) {
+  for (const prefix of FORWARD_HEADER_PREFIXES) {
+    if (headerName.startsWith(prefix)) return true;
+  }
+  return false;
+}
+function randomItem(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+function randomDelay(maxMs) {
+  if (maxMs <= 0) return;
+  const ms = Math.floor(Math.random() * maxMs) + 20;
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
-// --- Main Handler ---
+// ---------- Shared State ----------
+let inFlight = 0;
+const SERVER_NAMES = ["nginx", "Apache/2.4.41 (Ubuntu)", "LiteSpeed", "cloudflare", "Microsoft-IIS/10.0"];
+const DECOY_404_TEMPLATES = [
+  "<!DOCTYPE html><html><head><title>404 Not Found</title></head><body><h1>Not Found</h1><p>The requested URL was not found on this server.</p></body></html>",
+  "<!DOCTYPE html><html><head><title>Page Not Found</title></head><body style='text-align:center;padding-top:50px;'><h2>404</h2><p>Oops! The page you're looking for doesn't exist.</p></body></html>",
+  "<!DOCTYPE html><html><head><title>Error 404</title></head><body><h1>404 - Resource Not Found</h1><p>Please check the URL or contact the administrator.</p></body></html>",
+];
+const FAKE_HEALTH_JSON = JSON.stringify({
+  status: "ok",
+  uptime: Math.floor(Date.now() / 1000) % 86400,
+  version: "2.1.3",
+  timestamp: Date.now()
+});
+
+// ---------- Main Handler ----------
 export default async function handler(req) {
   const requestId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const startedAt = Date.now();
-
   let slotAcquired = false;
-
   const url = new URL(req.url);
 
-  // 1. Fake Health Check Endpoint (safe)
+  // ---- 1. Landing page (root) ----
+  if (url.pathname === "/" || url.pathname === "/index.html") {
+    return new Response(LANDING_HTML, {
+      status: 200,
+      headers: { "content-type": "text/html; charset=utf-8", "server": randomItem(SERVER_NAMES) }
+    });
+  }
+
+  // ---- 2. Fake Health Check ----
   if (url.pathname === FAKE_HEALTH_PATH) {
     const respHeaders = new Headers();
     respHeaders.set("content-type", "application/json; charset=utf-8");
     respHeaders.set("server", randomItem(SERVER_NAMES));
-    if (Math.random() > 0.5) respHeaders.set("x-content-type-options", "nosniff");
-    if (Math.random() > 0.7) respHeaders.set("x-frame-options", "DENY");
-    return new Response(FAKE_HEALTH_JSON, {
-      status: 200,
-      headers: respHeaders,
-    });
+    return new Response(FAKE_HEALTH_JSON, { status: 200, headers: respHeaders });
   }
 
-  // 2. Validation (missing target domain)
+  // ---- 3. Validate target domain ----
   if (!TARGET_BASE) {
     return new Response(randomItem(DECOY_404_TEMPLATES), {
       status: 404,
@@ -146,8 +225,8 @@ export default async function handler(req) {
     });
   }
 
-  // 3. Path Validation (relay only on designated path)
-  if (!isAllowedRelayPath(url.pathname)) {
+  // ---- 4. Path validation (relay only on RELAY_PATH) ----
+  if (!(url.pathname === RELAY_PATH || url.pathname.startsWith(`${RELAY_PATH}/`))) {
     const decoyHTML = randomItem(DECOY_404_TEMPLATES);
     return new Response(decoyHTML, {
       status: 404,
@@ -155,12 +234,12 @@ export default async function handler(req) {
     });
   }
 
-  // 4. Method Validation
+  // ---- 5. Method validation ----
   if (!ALLOWED_METHODS.has(req.method)) {
     return new Response("Method Not Allowed", { status: 405 });
   }
 
-  // 5. Authentication (optional)
+  // ---- 6. Authentication (optional) ----
   if (RELAY_KEY) {
     const authToken = req.headers.get("x-relay-key") || "";
     if (authToken !== RELAY_KEY) {
@@ -172,26 +251,20 @@ export default async function handler(req) {
     }
   }
 
-  // 6. Concurrency Limit
+  // ---- 7. Concurrency limit ----
   if (!tryAcquireSlot()) {
-    return new Response("Service Unavailable", {
-      status: 503,
-      headers: { "retry-after": "1" }
-    });
+    return new Response("Service Unavailable", { status: 503, headers: { "retry-after": "1" } });
   }
   slotAcquired = true;
 
   try {
-    // --- Build Target URL ---
+    // Build target URL
     const targetUrl = `${TARGET_BASE}${url.pathname}${url.search}`;
-
-    // --- Filter Headers ---
+    // Prepare headers
     const headers = new Headers();
     let clientIp = null;
-
     for (const [key, value] of req.headers) {
       const lowerKey = key.toLowerCase();
-      
       if (STRIP_REQUEST_HEADERS.has(lowerKey)) continue;
       if (lowerKey.startsWith("x-vercel-")) continue;
       if (lowerKey.startsWith("cf-")) continue;
@@ -201,15 +274,11 @@ export default async function handler(req) {
         continue;
       }
       if (!shouldForwardHeader(lowerKey)) continue;
-      
       headers.set(key, value);
     }
-
     if (clientIp) {
       headers.set("x-forwarded-for", clientIp);
     }
-
-    // If User-Agent is missing, add a random one (optional, but safe for Xray)
     if (!headers.has("user-agent")) {
       headers.set("user-agent", randomItem([
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
@@ -217,44 +286,34 @@ export default async function handler(req) {
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0",
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:126.0) Gecko/20100101 Firefox/126.0",
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
       ]));
     }
 
-    // --- Optional Timing Jitter (disabled by default) ---
-    if (JITTER_MS_MAX > 0) {
-      await randomDelay(JITTER_MS_MAX);
-    }
+    // Optional jitter
+    if (JITTER_MS_MAX > 0) await randomDelay(JITTER_MS_MAX);
 
-    // --- Upstream Fetch ---
-    const method = req.method;
-    const hasBody = method !== "GET" && method !== "HEAD";
-    
+    // Upstream request
     const abortController = new AbortController();
     const timeoutId = setTimeout(() => abortController.abort(), UPSTREAM_TIMEOUT_MS);
-    
     const fetchOptions = {
-      method,
+      method: req.method,
       headers,
       redirect: "manual",
       signal: abortController.signal,
     };
-    
-    if (hasBody) {
+    if (req.method !== "GET" && req.method !== "HEAD") {
       fetchOptions.body = req.body;
       fetchOptions.duplex = "half";
     }
-    
     let upstream;
     try {
       upstream = await fetch(targetUrl, fetchOptions);
     } finally {
       clearTimeout(timeoutId);
     }
-    
-    // --- Build Response with Random Headers ---
+
+    // Build response headers (randomized)
     const responseHeaders = new Headers();
-    
     for (const [key, value] of upstream.headers) {
       const lowerKey = key.toLowerCase();
       if (lowerKey === "transfer-encoding" || lowerKey === "connection") continue;
@@ -263,41 +322,23 @@ export default async function handler(req) {
       if (lowerKey.startsWith("cf-")) continue;
       responseHeaders.set(key, value);
     }
-    
-    // Random server name (does not affect Xray protocol)
     responseHeaders.set("server", randomItem(SERVER_NAMES));
-    
-    // Random security headers (harmless)
     if (Math.random() > 0.3) responseHeaders.set("x-content-type-options", "nosniff");
     if (Math.random() > 0.5) responseHeaders.set("x-frame-options", "SAMEORIGIN");
     if (Math.random() > 0.7) responseHeaders.set("x-xss-protection", "1; mode=block");
-    if (Math.random() > 0.6) responseHeaders.set("permissions-policy", "geolocation=()");
-    
+
     if (process.env.ENABLE_LOGGING !== "0") {
-      const durationMs = Date.now() - startedAt;
-      console.log(`[relay] ${requestId} ${method} ${url.pathname} → ${upstream.status} (${durationMs}ms)`);
+      console.log(`[relay] ${requestId} ${req.method} ${url.pathname} → ${upstream.status} (${Date.now() - startedAt}ms)`);
     }
-    
-    return new Response(upstream.body, {
-      status: upstream.status,
-      headers: responseHeaders,
-    });
-    
+    return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
   } catch (error) {
-    const durationMs = Date.now() - startedAt;
-    
-    if (error.name === "AbortError") {
-      if (process.env.ENABLE_LOGGING !== "0") {
-        console.error(`[relay] ${requestId} timeout after ${durationMs}ms`);
-      }
-      return new Response("Gateway Timeout", { status: 504 });
-    }
-    
     if (process.env.ENABLE_LOGGING !== "0") {
       console.error(`[relay] ${requestId} error: ${error.message}`);
     }
+    if (error.name === "AbortError") {
+      return new Response("Gateway Timeout", { status: 504 });
+    }
     return new Response("Bad Gateway", { status: 502 });
-    
   } finally {
     if (slotAcquired) releaseSlot();
   }
